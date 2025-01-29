@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-from models import db, Game,Player,PlayerGame,Category
-from flask_migrate import Migrate
-from flask import Flask, request, make_response, jsonify
-from flask_restful import Api, Resource
 import os
+from flask import Flask, jsonify  # ✅ Import jsonify here
+from flask_migrate import Migrate
+from flask_restful import Api, Resource,request  # ✅ Import Resource here
 from flask_cors import CORS
+from models import db, Game, Player, PlayerGame, Category,Country
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 DATABASE = os.environ.get("DB_URI", f"sqlite:///{os.path.join(BASE_DIR, 'app.db')}")
@@ -16,25 +16,13 @@ app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.json.compact = False
 
 migrate = Migrate(app, db)
-
 db.init_app(app)
-
 api = Api(app)
 
 @app.route("/")
 def index():
     return "<h1>Hi Welcome</h1>"
-from flask import jsonify, request
-from flask_restful import Resource
-from models import Game, Category, db
 
-from flask import jsonify, request
-from flask_restful import Resource
-from app import db
-from models import Game, Category  # assuming these are your models
-
-class GameResource(Resource):
-   from flask import jsonify
 
 class GameResource(Resource):
     def get(self, game_id=None):
@@ -114,8 +102,7 @@ class GameResource(Resource):
         db.session.commit()
         return jsonify({'message': 'Game deleted successfully!'})
 
-# Define routes for GameResource
-api.add_resource(GameResource, '/games', '/games/<int:game_id>')
+
 
 class CategoryResource(Resource):
     def get(self, category_id=None):
@@ -124,9 +111,17 @@ class CategoryResource(Resource):
             # Retrieve a single category by ID
             category = Category.query.get(category_id)
             if category:
+                # Get all games that belong to this category
+                games = Game.query.filter_by(category_id=category_id).all()
                 return jsonify({
                     'category_id': category.category_id,
-                    'category_name': category.category_name
+                    'category_name': category.category_name,
+                    'games': [{
+                        'game_id': game.game_id,
+                        'title': game.title,
+                        'release_year': game.release_year,
+                        'photo_url': game.photo_url
+                    } for game in games]
                 })
             return jsonify({'message': 'Category not found'}), 404
         else:
@@ -173,5 +168,215 @@ class CategoryResource(Resource):
         db.session.commit()
         return jsonify({'message': 'Category deleted successfully!'})
 
+
 # Define routes for CategoryResource
 api.add_resource(CategoryResource, '/categories', '/categories/<int:category_id>')
+
+
+class PlayerResource(Resource):
+    def get(self, player_id=None):
+        """Retrieve players."""
+        if player_id:
+            # Retrieve a specific player by ID
+            player = Player.query.get(player_id)
+            if not player:
+                return jsonify({'message': 'Player not found'}), 404
+            
+            # Include games associated with the player
+            games = [{
+                'game_id': game.game_id,
+                'game_name': game.game_name
+            } for game in player.games]
+            
+            return jsonify({
+                'player_id': player.player_id,
+                'username': player.username,
+                'email': player.email,
+                'country': player.country.country_name,
+                'games': games  # Add games to the response
+            })
+        else:
+            # Retrieve all players
+            players = Player.query.all()
+            if not players:
+                return jsonify({'message': 'No players found'}), 404
+            
+            # Include games for each player
+            players_data = [{
+                'player_id': player.player_id,
+                'username': player.username,
+                'email': player.email,
+                'country': player.country.country_name,
+                'games': [{
+                    'game_id': game.game_id,
+                    'game_name': game.game_name
+                } for game in player.games]
+            } for player in players]
+            
+            return jsonify(players_data)
+
+
+    def post(self):
+        """Create a new player."""
+        data = request.get_json()
+        new_player = Player(
+            username=data['username'],
+            email=data['email'],
+            country_id=data['country_id']
+        )
+        db.session.add(new_player)
+        db.session.commit()
+        return jsonify({'message': 'Player added successfully!', 'player_id': new_player.player_id})
+
+    def patch(self, player_id):
+        """Update an existing player partially."""
+        data = request.get_json()
+        player = Player.query.get(player_id)
+        if not player:
+            return jsonify({'message': 'Player not found'}), 404
+        
+        if 'username' in data:
+            player.username = data['username']
+        if 'email' in data:
+            player.email = data['email']
+        if 'country_id' in data:
+            player.country_id = data['country_id']
+        
+        db.session.commit()
+        return jsonify({'message': 'Player updated successfully!'})
+    
+class CountryResource(Resource):
+    def get(self, country_id=None):
+        if country_id:
+            country = Country.query.get(country_id)
+            if not country:
+                return jsonify({'message': 'Country not found'}), 404
+
+            # Retrieve all players associated with this country
+            players = [{'player_id': player.player_id, 'username': player.username} for player in country.players]
+
+            return jsonify({
+                'country_id': country.country_id,
+                'country_name': country.country_name,
+                'players': players  # Include players in the response
+            })
+
+        # Retrieve all countries (if no country_id is provided)
+        countries = Country.query.all()
+        if not countries:
+            return jsonify({'message': 'No countries found'}), 404
+
+        return jsonify({'countries': [  # Corrected indentation here
+            {'country_id': country.country_id, 'country_name': country.country_name}
+            for country in countries
+        ]})
+
+    def post(self):
+        """Create a new country."""
+        data = request.get_json()
+        if not data or 'country_name' not in data:
+            return jsonify({'message': 'Missing country_name in request'}), 400
+        
+        new_country = Country(country_name=data['country_name'])
+        db.session.add(new_country)
+        db.session.commit()
+        return jsonify({'message': 'Country added successfully!', 'country_id': new_country.country_id}), 201
+
+    def patch(self, country_id):
+        """Update an existing country partially."""
+        data = request.get_json()
+        country = Country.query.get(country_id)
+        if not country:
+            return jsonify({'message': 'Country not found'}), 404
+        
+        if 'country_name' in data:
+            country.country_name = data['country_name']
+        
+        db.session.commit()
+        return jsonify({'message': 'Country updated successfully!'})
+
+class PlayerGameResource(Resource):
+    
+    # Get a specific player-game relationship or all player-game relationships
+    def get(self, player_game_id=None):
+        if player_game_id:
+            # Retrieve a single player-game relationship by player_game_id
+            player_game = PlayerGame.query.get(player_game_id)
+            if not player_game:
+                return jsonify({'message': 'PlayerGame not found'}), 404
+            
+            # Return the details of the player-game relationship
+            return jsonify({
+                'id': player_game.id,
+                'game': player_game.game.title,
+                'player': player_game.player.username,
+                'review': player_game.review,
+                'rating': player_game.rating
+            })
+        
+        # Retrieve all player-game relationships if no player_game_id is provided
+        player_games = PlayerGame.query.all()
+        if not player_games:
+            return jsonify({'message': 'No player-game relationships found'}), 404
+        
+        # Return all player-game relationships
+        return jsonify([{
+            'id': player_game.id,
+            'game': player_game.game.title,
+            'player': player_game.player.username,
+            'review': player_game.review,
+            'rating': player_game.rating
+        } for player_game in player_games])
+    
+
+    # Create a new player-game relationship
+    def post(self):
+        data = request.get_json()
+        
+        # Validate incoming data
+        if not data or 'game_id' not in data or 'player_id' not in data:
+            return jsonify({'message': 'Missing required fields (game_id, player_id)'}), 400
+        
+        # Create the new player-game relationship
+        new_player_game = PlayerGame(
+            game_id=data['game_id'],
+            player_id=data['player_id'],
+            review=data.get('review'),
+            rating=data.get('rating')
+        )
+        
+        # Add to session and commit to the database
+        db.session.add(new_player_game)
+        db.session.commit()
+        
+        # Return success message
+        return jsonify({'message': 'PlayerGame added successfully!', 'id': new_player_game.id}), 201
+    
+
+    # Partially update an existing player-game relationship
+    def patch(self, player_game_id):
+        data = request.get_json()
+        
+        # Find the player-game relationship by ID
+        player_game = PlayerGame.query.get(player_game_id)
+        if not player_game:
+            return jsonify({'message': 'PlayerGame not found'}), 404
+        
+        # Update only the fields that are provided
+        if 'review' in data:
+            player_game.review = data['review']
+        if 'rating' in data:
+            player_game.rating = data['rating']
+        
+        # Commit changes to the database
+        db.session.commit()
+        
+        # Return success message
+        return jsonify({'message': 'PlayerGame updated successfully!'})
+
+# Define routes for GameResource
+api.add_resource(GameResource, '/games', '/games/<int:game_id>')
+api.add_resource(PlayerResource, '/players', '/players/<int:player_id>')
+api.add_resource(GameResource, '/players/<int:player_id>/games')
+api.add_resource(CountryResource, '/countries', '/countries/<int:country_id>')
+api.add_resource(PlayerGameResource, '/player_games', '/player_games/<int:player_game_id>')
