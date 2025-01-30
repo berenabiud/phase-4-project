@@ -2,21 +2,34 @@
 import os
 from flask import Flask, jsonify  # ✅ Import jsonify here
 from flask_migrate import Migrate
-from flask_restful import Api, Resource,request  # ✅ Import Resource here
+from flask_restful import Api, Resource, request  # ✅ Import Resource here
 from flask_cors import CORS
-from models import db, Game, Player, PlayerGame, Category,Country
+from models import db, Game, Player, PlayerGame, Category, Country
+from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 DATABASE = os.environ.get("DB_URI", f"sqlite:///{os.path.join(BASE_DIR, 'app.db')}")
 
 app = Flask(__name__)
+
+# Enable CORS
 CORS(app)
 app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.json.compact = False
 
+# Enable CORS for specific routes (e.g., /api/*)
+CORS(app, resources={r"/api/*": {"origins": "*"}})
+
+# Initialize JWTManager
+app.config["JWT_SECRET_KEY"] = os.environ.get("JWT_SECRET_KEY", "123456")  # Add a default key if not in env
+jwt = JWTManager(app)
+
+# Initialize database and migrations
 migrate = Migrate(app, db)
 db.init_app(app)
+
+# Initialize API
 api = Api(app)
 
 @app.route("/")
@@ -24,34 +37,36 @@ def index():
     return "<h1>Hi Welcome</h1>"
 
 
+
 class GameResource(Resource):
     def get(self, game_id=None):
-        """Retrieve a specific game by its ID or all games."""
         try:
             if game_id:
                 # Retrieve a single game by ID
                 game = Game.query.get(game_id)
                 if game:
-                    return jsonify({
+                    return {  # ✅ Return a dictionary (Flask-Restful auto-serializes it)
                         'game_id': game.game_id,
                         'title': game.title,
                         'release_year': game.release_year,
                         'photo_url': game.photo_url,
                         'category': game.category.category_name if game.category else None
-                    })
-                return jsonify({'message': 'Game not found'}), 404
+                    }, 200
+                return {"message": "Game not found"}, 404  # ✅ Dict + Status Code
+
             else:
                 # Retrieve all games if no game_id is provided
                 games = Game.query.all()
-                return jsonify([{
+                return [{
                     'game_id': game.game_id,
                     'title': game.title,
                     'release_year': game.release_year,
                     'photo_url': game.photo_url,
                     'category': game.category.category_name if game.category else None
-                } for game in games])
+                } for game in games], 200  # ✅ List of dictionaries
+
         except Exception as e:
-            return jsonify({'error': str(e)}), 500
+            return {"error": str(e)}, 500  # ✅ Dict + Status Code
 
 
     def post(self):
@@ -173,64 +188,78 @@ class CategoryResource(Resource):
 api.add_resource(CategoryResource, '/categories', '/categories/<int:category_id>')
 
 
+from flask import request, jsonify
+from werkzeug.security import generate_password_hash, check_password_hash
+
 class PlayerResource(Resource):
     def get(self, player_id=None):
-        """Retrieve players."""
-        if player_id:
-            # Retrieve a specific player by ID
-            player = Player.query.get(player_id)
-            if not player:
-                return jsonify({'message': 'Player not found'}), 404
-            
-            # Include games associated with the player
-            games = [{
-                'game_id': game.game_id,
-                'game_name': game.game_name
-            } for game in player.games]
-            
-            return jsonify({
-                'player_id': player.player_id,
-                'username': player.username,
-                'email': player.email,
-                'country': player.country.country_name,
-                'games': games  # Add games to the response
-            })
-        else:
-            # Retrieve all players
-            players = Player.query.all()
-            if not players:
-                return jsonify({'message': 'No players found'}), 404
-            
-            # Include games for each player
-            players_data = [{
-                'player_id': player.player_id,
-                'username': player.username,
-                'email': player.email,
-                'country': player.country.country_name,
-                'games': [{
-                    'game_id': game.game_id,
-                    'game_name': game.game_name
-                } for game in player.games]
-            } for player in players]
-            
-            return jsonify(players_data)
+    
+     if player_id:
+        # Retrieve a specific player by ID
+        player = Player.query.get(player_id)
+        if not player:
+            return jsonify({'message': 'Player not found'}), 404
+        
+        # Return player details including password_hash
+        return jsonify({
+            'player_id': player.player_id,
+            'username': player.username,
+            'email': player.email,
+            'country': player.country.country_name,
+            'password_hash': player.password_hash  # Optional: include password_hash
+        })
+     else:
+        # Retrieve all players
+        players = Player.query.all()
+        if not players:
+            return jsonify({'message': 'No players found'}), 404
+        
+        # Return player details including password_hash
+        players_data = [{
+            'player_id': player.player_id,
+            'username': player.username,
+            'email': player.email,
+            'country': player.country.country_name,
+            'password_hash': player.password_hash  # Optional: include password_hash
+        } for player in players]
+        
+        return jsonify(players_data)
 
 
     def post(self):
         """Create a new player."""
         data = request.get_json()
+
+        # Ensure required fields are present
+        if not all(field in data for field in ['username', 'email', 'password', 'country_id']):
+            return jsonify({'message': 'Missing required fields'}), 400
+
+        # Check if the username or email already exists
+        existing_user = Player.query.filter((Player.username == data['username']) | (Player.email == data['email'])).first()
+        if existing_user:
+            return jsonify({'message': 'Username or email already taken'}), 400
+
+        # Hash the password before storing it
+        hashed_password = generate_password_hash(data['password'])
+
+        # Create new player with hashed password
         new_player = Player(
             username=data['username'],
             email=data['email'],
+            password_hash=hashed_password,
             country_id=data['country_id']
         )
+        
+        # Save the new player to the database
         db.session.add(new_player)
         db.session.commit()
+        
         return jsonify({'message': 'Player added successfully!', 'player_id': new_player.player_id})
 
     def patch(self, player_id):
         """Update an existing player partially."""
         data = request.get_json()
+
         player = Player.query.get(player_id)
         if not player:
             return jsonify({'message': 'Player not found'}), 404
@@ -241,9 +270,15 @@ class PlayerResource(Resource):
             player.email = data['email']
         if 'country_id' in data:
             player.country_id = data['country_id']
+        if 'password' in data:  # If password is being updated
+            # Hash the new password
+            player.password_hash = generate_password_hash(data['password'])
         
+        # Commit the changes
         db.session.commit()
+        
         return jsonify({'message': 'Player updated successfully!'})
+
     
 class CountryResource(Resource):
     def get(self, country_id=None):
@@ -294,6 +329,16 @@ class CountryResource(Resource):
         
         db.session.commit()
         return jsonify({'message': 'Country updated successfully!'})
+    
+class CountryPlayersResource(Resource):
+    def get(self, country_id):
+        """Retrieve all players of a specific country"""
+        country = Country.query.get(country_id)
+        if not country:
+            return jsonify({'message': 'Country not found'}), 404
+
+        players = [{'player_id': player.player_id, 'username': player.username} for player in country.players]
+        return jsonify({'country_id': country.country_id, 'country_name': country.country_name, 'players': players})
 
 class PlayerGameResource(Resource):
     
@@ -373,10 +418,89 @@ class PlayerGameResource(Resource):
         
         # Return success message
         return jsonify({'message': 'PlayerGame updated successfully!'})
+    
+from flask import request
+from flask_restful import Resource
+from models import Game, Player  # Ensure you import the models appropriately
+
+class PlayerGamesResource(Resource):
+    def get(self, player_id):
+        # Retrieve the player from the database
+        player = Player.query.get(player_id)
+        if not player:
+            return {'message': 'Player not found'}, 404
+
+        # Retrieve games associated with the player (adjust based on your model)
+        games = Game.query.filter_by(player_id=player_id).all()
+
+        # If no games are found for the player
+        if not games:
+            return {'message': 'No games found for this player'}, 404
+
+        # Format the list of games to return as JSON
+        games_data = [{'game_id': game.id, 'name': game.name, 'genre': game.genre} for game in games]
+
+        return {'games': games_data}, 200
+
+
+from flask import request, jsonify
+from werkzeug.security import check_password_hash
+from flask_jwt_extended import create_access_token
+from models import Player  # Adjust the import path as necessary
+
+class LoginResource(Resource):
+    def post(self):
+        data = request.get_json()
+
+        # Validate required fields
+        required_fields = ['username', 'password']
+        if not all(field in data for field in required_fields):
+            return {'message': 'Missing fields'}, 400
+
+        username = data['username']
+        password = data['password']
+
+        # Retrieve player by username
+        player = Player.query.filter_by(username=username).first()
+        if not player:
+            print(f"Player not found: {username}")
+            return {'message': 'Invalid username or password'}, 401
+
+        # Check if the password matches
+        if not player.check_password(password):
+            print(f"Invalid password for player: {username}")
+            return {'message': 'Invalid username or password'}, 401
+
+        try:
+            # Create access token
+            access_token = create_access_token(identity=player.player_id)
+            print(f"Access token created: {access_token}")
+
+            # Ensure player data is being passed
+            user_data = {
+                'username': player.username,
+                'email': player.email,  # Adjust based on your Player model
+            }
+            print(f"User data: {user_data}")
+
+            # Return success response with user data and token
+            return {
+                'user': user_data,
+                'access_token': access_token
+            }, 200
+        except Exception as e:
+            print(f"Error generating token: {str(e)}")
+            return {'message': f'Error generating token: {str(e)}'}, 500
+
+
+# Adding the Login route to the API
+api.add_resource(LoginResource, '/login')
 
 # Define routes for GameResource
 api.add_resource(GameResource, '/games', '/games/<int:game_id>')
 api.add_resource(PlayerResource, '/players', '/players/<int:player_id>')
-api.add_resource(GameResource, '/players/<int:player_id>/games')
+# api.add_resource(GameResource, '/players/<int:player_id>/games')
 api.add_resource(CountryResource, '/countries', '/countries/<int:country_id>')
+api.add_resource(CountryPlayersResource, '/countries/<int:country_id>/players')
 api.add_resource(PlayerGameResource, '/player_games', '/player_games/<int:player_game_id>')
+api.add_resource(PlayerGamesResource, '/players/<int:player_id>/games')

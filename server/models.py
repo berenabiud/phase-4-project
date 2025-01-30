@@ -2,6 +2,7 @@ from sqlalchemy_serializer import SerializerMixin
 from sqlalchemy.ext.associationproxy import association_proxy
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import MetaData
+from werkzeug.security import generate_password_hash, check_password_hash
 metadata = MetaData(
     naming_convention={
         "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
@@ -47,6 +48,7 @@ class Player(db.Model):
     username = db.Column(db.String(30), nullable=False, unique=True)
     email = db.Column(db.String(120), nullable=False, unique=True)
     country_id = db.Column(db.Integer, db.ForeignKey('countries.country_id'), nullable=False)
+    password_hash = db.Column(db.String(128))  # Added password_hash column
 
     # Relationships
     player_games = db.relationship('PlayerGame', back_populates='player', cascade='all, delete-orphan')
@@ -54,6 +56,14 @@ class Player(db.Model):
 
     def __repr__(self):
         return f"<Player(username='{self.username}', email='{self.email}')>"
+
+    # Method to set the password (hashes the password)
+    def set_password(self, password):
+        self.password_hash = generate_password_hash(password)
+
+    # Method to check if the provided password matches the hash
+    def check_password(self, password):
+        return check_password_hash(self.password_hash, password)
 
 
 class Country(db.Model):
