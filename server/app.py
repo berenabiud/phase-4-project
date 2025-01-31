@@ -185,7 +185,7 @@ class CategoryResource(Resource):
 
 
 # Define routes for CategoryResource
-api.add_resource(CategoryResource, '/categories', '/categories/<int:category_id>')
+
 
 
 from flask import request, jsonify
@@ -442,6 +442,24 @@ class PlayerGamesResource(Resource):
 
         return {'games': games_data}, 200
 
+class PlayerGamesListResource(Resource):
+    def get(self, player_id):
+        # Retrieve all PlayerGame entries associated with the given player_id
+        player_games = PlayerGame.query.filter_by(player_id=player_id).all()
+
+        if not player_games:
+            return jsonify({'message': 'No games found for this player'}), 404
+        
+        # Get the games associated with the player through PlayerGame
+        return jsonify([{
+            'game': player_game.game.title,
+            'review': player_game.review,
+            'rating': player_game.rating
+        } for player_game in player_games])
+
+# Add the resource to the API with the URL structure: /player/<player_id>/games
+api.add_resource(PlayerGamesListResource, '/player/<int:player_id>/games')
+
 
 from flask import request, jsonify
 from werkzeug.security import check_password_hash
@@ -500,7 +518,9 @@ api.add_resource(LoginResource, '/login')
 api.add_resource(GameResource, '/games', '/games/<int:game_id>')
 api.add_resource(PlayerResource, '/players', '/players/<int:player_id>')
 # api.add_resource(GameResource, '/players/<int:player_id>/games')
+api.add_resource(CategoryResource, '/categories', '/categories/<int:category_id>')
+# api.add_resource(PlayerGamesListResource, '/player/<int:player_id>/games')
 api.add_resource(CountryResource, '/countries', '/countries/<int:country_id>')
 api.add_resource(CountryPlayersResource, '/countries/<int:country_id>/players')
 api.add_resource(PlayerGameResource, '/player_games', '/player_games/<int:player_game_id>')
-api.add_resource(PlayerGamesResource, '/players/<int:player_id>/games')
+# api.add_resource(PlayerGamesResource, '/players/<int:player_id>/games')
